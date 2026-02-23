@@ -1,3 +1,10 @@
+# Home Plate
+
+## About:
+
+Home Plate is a web application designed to bridge the gap between homemade food businesses and their customers. Whether it is students living away from home or professionals away from there home looking for a taste of home, Home Plate would make it easy to discover, connect, and order from local homemade food vendors. The platform focuses on simplifying communication, so both sellers and customers can interact easily. Built with TypeScript and React in VS Code, Home Plate emphasizes a smooth and intuitive user experience, ensuring that finding and sharing homemade meals is as easy as it should be.
+
+
 # React + TypeScript + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
