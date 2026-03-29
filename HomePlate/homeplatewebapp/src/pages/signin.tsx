@@ -1,4 +1,5 @@
 // src/pages/Home.tsx
+import { supabase } from "../supabaseClient";
 import React from "react";
 
 const signin = () => {

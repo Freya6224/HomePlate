@@ -1,6 +1,6 @@
 import React, { useState, ChangeEvent, FormEvent, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-// import { supabase } from "../supabaseClient";
+ import { supabase } from "../supabaseClient";
 
 const SignUp = () => {
   const navigate = useNavigate();
