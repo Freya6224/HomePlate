@@ -1,10 +1,10 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import Home from './pages/home';
+import Home from './pages/LandingPage';
 import SignIn from './pages/signin';
-import SignUp from './pages/signup';
-import BuyerPage from './pages/buyerPage';
-import SellerPage from './pages/sellerPage';
+import SignUp from './pages/AuthPage';
+import BuyerPage from './pages/CustomerDashboard';
+import SellerPage from './pages/SellerDashboard';
 
 function App() {
   return (

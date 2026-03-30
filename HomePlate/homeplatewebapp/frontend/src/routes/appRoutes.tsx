@@ -1,9 +1,9 @@
 import { Routes, Route } from "react-router-dom";
-import Home from "../pages/home";
+import Home from "../pages/LandingPage";
 import SignIn from "../pages/signin";
-import SignUp from "../pages/signup";
-import BuyerDashboard from "../pages/buyerPage";
-import SellerDashboard from "../pages/sellerPage";
+import SignUp from "../pages/AuthPage";
+import BuyerDashboard from "../pages/CustomerDashboard";
+import SellerDashboard from "../pages/SellerDashboard";
 
 const appRoutes = () => {
   return (
