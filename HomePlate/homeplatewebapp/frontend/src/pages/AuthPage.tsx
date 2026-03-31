@@ -1,147 +1,264 @@
-import React, { useState, ChangeEvent, FormEvent, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
- import { supabase } from "../supabaseClient";
 
-const SignUp = () => {
+import React, { useState, useEffect, ChangeEvent, FormEvent } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
+import { ChefHat, Eye, EyeOff, ArrowLeft, Loader2 } from 'lucide-react';
+import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs';
+
+interface FormData {
+  email: string;
+  password: string;
+  name: string;
+}
+
+const AuthPage: React.FC = () => {
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const [role, setRole] = useState<"buyer" | "seller">("buyer");
-  const [formData, setFormData] = useState({ name: "", email: "", password: "", confirmPassword: "" });
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState(false);
+  const { user, login, register } = useAuth();
+  
+  const initialMode = searchParams.get('mode') || 'login';
+  const initialRole = searchParams.get('role') || 'customer';
+  
+  const [mode, setMode] = useState<string>(initialMode);
+  const [role, setRole] = useState<string>(initialRole);
+  const [showPassword, setShowPassword] = useState<boolean>(false);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string>('');
+  
+  const [formData, setFormData] = useState<FormData>({
+    email: '',
+    password: '',
+    name: ''
+  });
 
   useEffect(() => {
-    const savedRole = sessionStorage.getItem("role") as "buyer" | "seller" | null;
-    if (savedRole) setRole(savedRole);
-  }, []);
+    if (user) {
+      const dashboard = user.role === 'seller' ? '/seller' : '/customer';
+      navigate(dashboard);
+    }
+  }, [user, navigate]);
 
-  const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
-    setError("");
-  };
-
-  const handleSubmit = async (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>): Promise<void> => {
     e.preventDefault();
-    if (formData.password !== formData.confirmPassword) { setError("Passwords do not match."); return; }
-    if (formData.password.length < 6) { setError("Password must be at least 6 characters."); return; }
+    setError('');
     setLoading(true);
-    setError("");
-    try {
-      // const { error: authError } = await supabase.auth.signUp({
-      //   email: formData.email, password: formData.password,
-      //   options: { data: { full_name: formData.name, role } },
-      // });
-      // if (authError) throw authError;
-      setSuccess(true);
-      setTimeout(() => { sessionStorage.setItem("role", role); navigate("/signin"); }, 2000);
-    } catch (err: any) {
-      setError(err.message || "Sign up failed. Please try again.");
-    } finally {
-      setLoading(false);
+
+    let result;
+    if (mode === 'login') {
+      result = await login(formData.email, formData.password);
+    } else {
+      if (!formData.name.trim()) {
+        setError('Name is required');
+        setLoading(false);
+        return;
+      }
+      result = await register(formData.email, formData.password, formData.name, role);
+    }
+
+    setLoading(false);
+    if (!result.success) {
+      setError(result.error || 'An error occurred');
     }
   };
 
-  const isBuyer = role === "buyer";
-  const accent = isBuyer ? "#ff7043" : "#43a047";
+  const handleInputChange = (e: ChangeEvent<HTMLInputElement>): void => {
+    setFormData(prev => ({
+      ...prev,
+      [e.target.name]: e.target.value
+    }));
+    setError('');
+  };
 
   return (
-    <div style={styles.page}>
-      <div style={styles.blobTop} />
-      <div style={styles.card}>
-        <button style={styles.backBtn} onClick={() => navigate("/")}>← Back</button>
-
-        <div style={styles.brand}>
-          <span>🍽️</span>
-          <span style={styles.brandName}>HomePlate</span>
-        </div>
-
-        <h2 style={styles.title}>Create an account</h2>
-        <p style={styles.subtitle}>Join the HomePlate community</p>
-
-        <div style={styles.roleToggle}>
-          <button style={{ ...styles.roleBtn, background: isBuyer ? accent : "transparent", color: isBuyer ? "#fff" : "#888" }}
-            onClick={() => { setRole("buyer"); sessionStorage.setItem("role", "buyer"); }}>
-            🛒 Buyer
-          </button>
-          <button style={{ ...styles.roleBtn, background: !isBuyer ? accent : "transparent", color: !isBuyer ? "#fff" : "#888" }}
-            onClick={() => { setRole("seller"); sessionStorage.setItem("role", "seller"); }}>
-            👨‍🍳 Seller
-          </button>
-        </div>
-
-        {success ? (
-          <div style={styles.successBox}>
-            <span style={{ fontSize: 32 }}>🎉</span>
-            <p style={{ margin: "8px 0 0", fontWeight: 600, color: "#2e7d32" }}>Account created! Redirecting…</p>
+    <div className="min-h-screen bg-[#FDFBF7] flex">
+      {/* Left side - Form */}
+      <div className="w-full lg:w-1/2 flex flex-col justify-center px-8 sm:px-16 lg:px-24 py-12">
+        <button 
+          onClick={() => navigate('/')}
+          className="flex items-center gap-2 text-[#75635C] hover:text-[#D05A45] transition-colors mb-8 self-start"
+          data-testid="back-to-home-btn"
+        >
+          <ArrowLeft className="w-5 h-5" strokeWidth={1.5} />
+          Back to Home
+        </button>
+        
+        <div className="max-w-md w-full mx-auto">
+          <div className="flex items-center gap-3 mb-8">
+            <div className="w-12 h-12 bg-[#D05A45] rounded-full flex items-center justify-center">
+              <ChefHat className="w-6 h-6 text-white" strokeWidth={1.5} />
+            </div>
+            <span className="font-heading text-2xl font-semibold text-[#3B2E2A]">Home Plate</span>
           </div>
-        ) : (
-          <form onSubmit={handleSubmit} style={styles.form}>
-            <div style={styles.field}>
-              <label style={styles.label}>Full Name</label>
-              <input type="text" name="name" value={formData.name} onChange={handleChange}
-                placeholder="Jane Smith" required style={{ ...styles.input, outlineColor: accent }} />
+          
+          <h1 className="font-heading text-3xl font-semibold text-[#3B2E2A] mb-2">
+            {mode === 'login' ? 'Welcome Back' : 'Create Account'}
+          </h1>
+          <p className="text-[#75635C] mb-8">
+            {mode === 'login' 
+              ? 'Sign in to access your dashboard' 
+              : `Join as a ${role === 'seller' ? 'seller' : 'customer'} today`}
+          </p>
+
+          {/* Mode Toggle */}
+          <div className="flex gap-4 mb-6">
+            <button
+              onClick={() => setMode('login')}
+              className={`flex-1 py-3 rounded-xl font-medium transition-colors ${
+                mode === 'login' 
+                  ? 'bg-[#D05A45] text-white' 
+                  : 'bg-[#F5EFE6] text-[#3B2E2A] hover:bg-[#EAE0D5]'
+              }`}
+              data-testid="login-mode-btn"
+            >
+              Sign In
+            </button>
+            <button
+              onClick={() => setMode('register')}
+              className={`flex-1 py-3 rounded-xl font-medium transition-colors ${
+                mode === 'register' 
+                  ? 'bg-[#D05A45] text-white' 
+                  : 'bg-[#F5EFE6] text-[#3B2E2A] hover:bg-[#EAE0D5]'
+              }`}
+              data-testid="register-mode-btn"
+            >
+              Register
+            </button>
+          </div>
+
+          {/* Role Selection for Register */}
+          {mode === 'register' && (
+            <div className="mb-6">
+              <span className="hp-label block mb-3">I want to</span>
+              <Tabs value={role} onValueChange={setRole} className="w-full">
+                <TabsList className="grid w-full grid-cols-2 bg-[#F5EFE6] p-1 rounded-xl">
+                  <TabsTrigger 
+                    value="customer" 
+                    className="rounded-lg data-[state=active]:bg-white data-[state=active]:text-[#3B2E2A] data-[state=active]:shadow-sm"
+                    data-testid="role-customer-tab"
+                  >
+                    Order Food
+                  </TabsTrigger>
+                  <TabsTrigger 
+                    value="seller"
+                    className="rounded-lg data-[state=active]:bg-white data-[state=active]:text-[#3B2E2A] data-[state=active]:shadow-sm"
+                    data-testid="role-seller-tab"
+                  >
+                    Sell Food
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
             </div>
-            <div style={styles.field}>
-              <label style={styles.label}>Email</label>
-              <input type="email" name="email" value={formData.email} onChange={handleChange}
-                placeholder="you@example.com" required style={{ ...styles.input, outlineColor: accent }} />
+          )}
+
+          {error && (
+            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl text-red-600 text-sm" data-testid="auth-error">
+              {error}
             </div>
-            <div style={styles.field}>
-              <label style={styles.label}>Password</label>
-              <input type="password" name="password" value={formData.password} onChange={handleChange}
-                placeholder="Min. 6 characters" required style={{ ...styles.input, outlineColor: accent }} />
+          )}
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {mode === 'register' && (
+              <div>
+                <label className="block text-sm font-medium text-[#3B2E2A] mb-2">Full Name</label>
+                <input
+                  type="text"
+                  name="name"
+                  value={formData.name}
+                  onChange={handleInputChange}
+                  placeholder="Enter your name"
+                  className="w-full hp-input px-4 py-3"
+                  required
+                  data-testid="name-input"
+                />
+              </div>
+            )}
+            
+            <div>
+              <label className="block text-sm font-medium text-[#3B2E2A] mb-2">Email</label>
+              <input
+                type="email"
+                name="email"
+                value={formData.email}
+                onChange={handleInputChange}
+                placeholder="Enter your email"
+                className="w-full hp-input px-4 py-3"
+                required
+                data-testid="email-input"
+              />
             </div>
-            <div style={styles.field}>
-              <label style={styles.label}>Confirm Password</label>
-              <input type="password" name="confirmPassword" value={formData.confirmPassword} onChange={handleChange}
-                placeholder="••••••••" required style={{ ...styles.input, outlineColor: accent }} />
+            
+            <div>
+              <label className="block text-sm font-medium text-[#3B2E2A] mb-2">Password</label>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  name="password"
+                  value={formData.password}
+                  onChange={handleInputChange}
+                  placeholder="Enter your password"
+                  className="w-full hp-input px-4 py-3 pr-12"
+                  required
+                  minLength={6}
+                  data-testid="password-input"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-[#75635C] hover:text-[#3B2E2A]"
+                  data-testid="toggle-password-btn"
+                >
+                  {showPassword ? <EyeOff className="w-5 h-5" strokeWidth={1.5} /> : <Eye className="w-5 h-5" strokeWidth={1.5} />}
+                </button>
+              </div>
             </div>
-            {error && <p style={styles.error}>{error}</p>}
-            <button type="submit" disabled={loading} style={{ ...styles.submitBtn, background: accent }}>
-              {loading ? "Creating account…" : `Sign Up as ${isBuyer ? "Buyer" : "Seller"}`}
+            
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full hp-btn-primary py-4 flex items-center justify-center gap-2 disabled:opacity-70"
+              data-testid="submit-auth-btn"
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  {mode === 'login' ? 'Signing in...' : 'Creating account...'}
+                </>
+              ) : (
+                mode === 'login' ? 'Sign In' : 'Create Account'
+              )}
             </button>
           </form>
-        )}
 
-        <p style={styles.switchText}>
-          Already have an account?{" "}
-          <span style={{ ...styles.link, color: accent }} onClick={() => navigate("/signin")}>Sign in</span>
-        </p>
+          <p className="mt-6 text-center text-[#75635C]">
+            {mode === 'login' ? "Don't have an account? " : "Already have an account? "}
+            <button
+              onClick={() => setMode(mode === 'login' ? 'register' : 'login')}
+              className="text-[#D05A45] font-medium hover:underline"
+              data-testid="switch-mode-link"
+            >
+              {mode === 'login' ? 'Register' : 'Sign In'}
+            </button>
+          </p>
+        </div>
+      </div>
+      
+      {/* Right side - Image */}
+      <div className="hidden lg:block lg:w-1/2 relative">
+        <img 
+          src="https://images.unsplash.com/photo-1771339140293-c862ee266385?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxOTB8MHwxfHNlYXJjaHwxfHxwZXJzb24lMjBjb29raW5nJTIwbWVhbHxlbnwwfHx8fDE3NzQ4Mzg2NjJ8MA&ixlib=rb-4.1.0&q=85"
+          alt="Cooking"
+          className="w-full h-full object-cover"
+        />
+        <div className="absolute inset-0 bg-gradient-to-t from-[#3B2E2A]/60 to-transparent" />
+        <div className="absolute bottom-12 left-12 right-12 text-white">
+          <blockquote className="font-heading text-2xl font-medium mb-4">
+            "The best meals are the ones made with love at home"
+          </blockquote>
+          <p className="text-white/80">- Home Plate Community</p>
+        </div>
       </div>
     </div>
   );
 };
 
-const styles: { [key: string]: React.CSSProperties } = {
-  page: {
-    minHeight: "100vh", background: "linear-gradient(160deg, #fffde7 0%, #fff3e0 60%, #fce4ec 100%)",
-    display: "flex", alignItems: "center", justifyContent: "center",
-    fontFamily: "'Segoe UI', sans-serif", position: "relative", overflow: "hidden", padding: "24px 16px",
-  },
-  blobTop: {
-    position: "absolute", bottom: -150, left: -100, width: 400, height: 400,
-    borderRadius: "50%", background: "rgba(102, 187, 106, 0.1)", filter: "blur(80px)", pointerEvents: "none",
-  },
-  card: {
-    background: "#fff", borderRadius: 24, padding: "40px 36px", width: "100%", maxWidth: 420,
-    boxShadow: "0 8px 40px rgba(0,0,0,0.1)", position: "relative", zIndex: 1,
-  },
-  backBtn: { background: "none", border: "none", color: "#aaa", cursor: "pointer", fontSize: 14, padding: 0, marginBottom: 20, fontFamily: "'Segoe UI', sans-serif" },
-  brand: { display: "flex", alignItems: "center", gap: 8, marginBottom: 20, fontSize: 20 },
-  brandName: { fontWeight: 700, background: "linear-gradient(135deg, #e64a19, #f57f17)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", fontFamily: "'Georgia', serif" },
-  title: { fontSize: 26, fontWeight: 700, margin: "0 0 4px", color: "#2d2d2d", fontFamily: "'Georgia', serif" },
-  subtitle: { fontSize: 14, color: "#999", margin: "0 0 24px" },
-  roleToggle: { display: "flex", background: "#f5f5f5", borderRadius: 50, padding: 4, marginBottom: 28 },
-  roleBtn: { flex: 1, border: "none", borderRadius: 50, padding: "10px 0", fontSize: 14, fontWeight: 600, cursor: "pointer", transition: "all 0.2s ease", fontFamily: "'Segoe UI', sans-serif" },
-  form: { display: "flex", flexDirection: "column" as const, gap: 14 },
-  field: { display: "flex", flexDirection: "column" as const, gap: 6 },
-  label: { fontSize: 13, fontWeight: 600, color: "#555" },
-  input: { padding: "12px 14px", borderRadius: 10, border: "1.5px solid #e0e0e0", fontSize: 15, outline: "none", fontFamily: "'Segoe UI', sans-serif" },
-  error: { color: "#e53935", fontSize: 13, margin: 0, padding: "8px 12px", background: "#ffeaea", borderRadius: 8 },
-  successBox: { textAlign: "center", padding: "32px 0", fontFamily: "'Segoe UI', sans-serif" },
-  submitBtn: { padding: "13px", borderRadius: 50, border: "none", color: "#fff", fontSize: 15, fontWeight: 600, cursor: "pointer", marginTop: 4, fontFamily: "'Segoe UI', sans-serif" },
-  switchText: { textAlign: "center", marginTop: 20, fontSize: 14, color: "#888" },
-  link: { cursor: "pointer", fontWeight: 600, textDecoration: "underline" },
-};
-
-export default SignUp;
+export default AuthPage;

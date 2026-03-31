@@ -1,147 +1,712 @@
-import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useState, useEffect, useCallback, ChangeEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
+import axios from 'axios';
+import { useAuth } from '../contexts/AuthContext';
+import { FoodItem, Order, CartItem, Review } from '../types';
+import { 
+  ChefHat, Search, Heart, ShoppingBag, Clock, Star, LogOut, 
+  Filter, Plus, Minus, MapPin, Loader2, HeartOff
+} from 'lucide-react';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
+import { Toaster, toast } from 'sonner';
 
-const MOCK_LISTINGS = [
-  { id: 1, seller: "Maria's Kitchen", dish: "Homemade Lasagna", price: 12, rating: 4.9, tags: ["Italian", "Comfort Food"], emoji: "🍝", distance: "0.4 mi" },
-  { id: 2, seller: "Priya's Tiffin", dish: "Dal Makhani + Rice", price: 9, rating: 4.8, tags: ["Indian", "Vegetarian"], emoji: "🍛", distance: "0.9 mi" },
-  { id: 3, seller: "Grandma Rosa", dish: "Tamales (3 pack)", price: 10, rating: 5.0, tags: ["Mexican", "Traditional"], emoji: "🫔", distance: "1.2 mi" },
-  { id: 4, seller: "Seoul Bites", dish: "Kimchi Fried Rice", price: 8, rating: 4.7, tags: ["Korean", "Spicy"], emoji: "🍚", distance: "1.5 mi" },
-  { id: 5, seller: "Baba's Hummus", dish: "Mezze Platter", price: 14, rating: 4.9, tags: ["Middle Eastern", "Vegan"], emoji: "🧆", distance: "0.7 mi" },
-  { id: 6, seller: "Nonna's Sweets", dish: "Tiramisu (2 pcs)", price: 7, rating: 4.8, tags: ["Italian", "Dessert"], emoji: "🍮", distance: "2.0 mi" },
-];
+const API_URL = process.env.REACT_APP_BACKEND_URL;
 
-const CATEGORIES = ["All", "Italian", "Indian", "Mexican", "Korean", "Vegetarian", "Vegan", "Dessert"];
-
-const BuyerPage = () => {
+const CustomerDashboard: React.FC = () => {
+  const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const [search, setSearch] = useState("");
-  const [activeCategory, setActiveCategory] = useState("All");
-  const [cart, setCart] = useState<number[]>([]);
+  
+  const [activeTab, setActiveTab] = useState<string>('browse');
+  const [foodItems, setFoodItems] = useState<FoodItem[]>([]);
+  const [favorites, setFavorites] = useState<FoodItem[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [categories, setCategories] = useState<string[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [showOrderDialog, setShowOrderDialog] = useState<boolean>(false);
+  const [deliveryAddress, setDeliveryAddress] = useState<string>('');
+  const [orderNotes, setOrderNotes] = useState<string>('');
+  const [orderLoading, setOrderLoading] = useState<boolean>(false);
+  
+  const [selectedItem, setSelectedItem] = useState<FoodItem | null>(null);
+  const [showItemDialog, setShowItemDialog] = useState<boolean>(false);
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [newReview, setNewReview] = useState<{ rating: number; comment: string }>({ rating: 5, comment: '' });
+  const [reviewLoading, setReviewLoading] = useState<boolean>(false);
 
-  const filtered = MOCK_LISTINGS.filter((item) => {
-    const matchSearch = item.dish.toLowerCase().includes(search.toLowerCase()) || item.seller.toLowerCase().includes(search.toLowerCase());
-    const matchCat = activeCategory === "All" || item.tags.includes(activeCategory);
-    return matchSearch && matchCat;
-  });
+  const fetchData = useCallback(async (): Promise<void> => {
+    setLoading(true);
+    try {
+      const [itemsRes, favsRes, ordersRes, catsRes] = await Promise.all([
+        axios.get<FoodItem[]>(`${API_URL}/api/food-items`, { withCredentials: true }),
+        axios.get<FoodItem[]>(`${API_URL}/api/favorites`, { withCredentials: true }),
+        axios.get<Order[]>(`${API_URL}/api/orders`, { withCredentials: true }),
+        axios.get<string[]>(`${API_URL}/api/categories`, { withCredentials: true })
+      ]);
+      
+      const favIds = new Set(favsRes.data.map(f => f.id));
+      const itemsWithFav = itemsRes.data.map(item => ({
+        ...item,
+        is_favorite: favIds.has(item.id)
+      }));
+      
+      setFoodItems(itemsWithFav);
+      setFavorites(favsRes.data);
+      setOrders(ordersRes.data);
+      setCategories(catsRes.data);
+    } catch (error) {
+      console.error('Error fetching data:', error);
+      toast.error('Failed to load data');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  const toggleCart = (id: number) => {
-    setCart((prev) => prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]);
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  const handleLogout = async (): Promise<void> => {
+    await logout();
+    navigate('/');
   };
 
+  const toggleFavorite = async (item: FoodItem): Promise<void> => {
+    try {
+      if (item.is_favorite) {
+        await axios.delete(`${API_URL}/api/favorites/${item.id}`, { withCredentials: true });
+        toast.success('Removed from favorites');
+      } else {
+        await axios.post(`${API_URL}/api/favorites/${item.id}`, {}, { withCredentials: true });
+        toast.success('Added to favorites');
+      }
+      
+      setFoodItems(prev => prev.map(i => 
+        i.id === item.id ? { ...i, is_favorite: !i.is_favorite } : i
+      ));
+      setFavorites(prev => 
+        item.is_favorite 
+          ? prev.filter(f => f.id !== item.id)
+          : [...prev, { ...item, is_favorite: true }]
+      );
+    } catch (error) {
+      toast.error('Failed to update favorites');
+    }
+  };
+
+  const addToCart = (item: FoodItem): void => {
+    setCart(prev => {
+      const existing = prev.find(c => c.id === item.id);
+      if (existing) {
+        return prev.map(c => c.id === item.id ? { ...c, quantity: c.quantity + 1 } : c);
+      }
+      return [...prev, { ...item, quantity: 1 }];
+    });
+    toast.success(`${item.name} added to cart`);
+  };
+
+  const updateCartQuantity = (itemId: string, delta: number): void => {
+    setCart(prev => {
+      const updated = prev.map(item => {
+        if (item.id === itemId) {
+          const newQty = item.quantity + delta;
+          return newQty > 0 ? { ...item, quantity: newQty } : null;
+        }
+        return item;
+      }).filter((item): item is CartItem => item !== null);
+      return updated;
+    });
+  };
+
+  const cartTotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+  const currentSeller = cart.length > 0 ? cart[0].seller_id : null;
+
+  const placeOrder = async (): Promise<void> => {
+    if (!deliveryAddress.trim()) {
+      toast.error('Please enter delivery address');
+      return;
+    }
+    
+    setOrderLoading(true);
+    try {
+      const orderData = {
+        items: cart.map(item => ({
+          food_item_id: item.id,
+          quantity: item.quantity
+        })),
+        delivery_address: deliveryAddress,
+        notes: orderNotes || null
+      };
+      
+      await axios.post(`${API_URL}/api/orders`, orderData, { withCredentials: true });
+      toast.success('Order placed successfully!');
+      setCart([]);
+      setShowOrderDialog(false);
+      setDeliveryAddress('');
+      setOrderNotes('');
+      fetchData();
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { detail?: string } } };
+      const msg = err.response?.data?.detail || 'Failed to place order';
+      toast.error(typeof msg === 'string' ? msg : 'Failed to place order');
+    } finally {
+      setOrderLoading(false);
+    }
+  };
+
+  const viewItemDetails = async (item: FoodItem): Promise<void> => {
+    setSelectedItem(item);
+    setShowItemDialog(true);
+    try {
+      const res = await axios.get<Review[]>(`${API_URL}/api/reviews/${item.id}`, { withCredentials: true });
+      setReviews(res.data);
+    } catch {
+      setReviews([]);
+    }
+  };
+
+  const submitReview = async (): Promise<void> => {
+    if (!newReview.comment.trim() || !selectedItem) {
+      toast.error('Please write a comment');
+      return;
+    }
+    
+    setReviewLoading(true);
+    try {
+      await axios.post(`${API_URL}/api/reviews`, {
+        food_item_id: selectedItem.id,
+        rating: newReview.rating,
+        comment: newReview.comment
+      }, { withCredentials: true });
+      
+      toast.success('Review submitted!');
+      setNewReview({ rating: 5, comment: '' });
+      
+      const res = await axios.get<Review[]>(`${API_URL}/api/reviews/${selectedItem.id}`, { withCredentials: true });
+      setReviews(res.data);
+      fetchData();
+    } catch (error: unknown) {
+      const err = error as { response?: { data?: { detail?: string } } };
+      const msg = err.response?.data?.detail || 'Failed to submit review';
+      toast.error(typeof msg === 'string' ? msg : 'Failed to submit review');
+    } finally {
+      setReviewLoading(false);
+    }
+  };
+
+  const filteredItems = foodItems.filter(item => {
+    const matchesSearch = !searchQuery || 
+      item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      item.description.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesCategory = selectedCategory === 'all' || item.category === selectedCategory;
+    const matchesSeller = !currentSeller || cart.length === 0 || item.seller_id === currentSeller;
+    return matchesSearch && matchesCategory && matchesSeller;
+  });
+
+  const getStatusColor = (status: string): string => {
+    const colors: Record<string, string> = {
+      pending: 'bg-yellow-100 text-yellow-800',
+      confirmed: 'bg-blue-100 text-blue-800',
+      preparing: 'bg-purple-100 text-purple-800',
+      ready: 'bg-green-100 text-green-800',
+      delivered: 'bg-gray-100 text-gray-800',
+      cancelled: 'bg-red-100 text-red-800'
+    };
+    return colors[status] || 'bg-gray-100 text-gray-800';
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#FDFBF7] flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-[#D05A45]" />
+      </div>
+    );
+  }
+
   return (
-    <div style={styles.page}>
-      <header style={styles.header}>
-        <div style={styles.headerLeft}>
-          <span style={{ fontSize: 24 }}>🍽️</span>
-          <span style={styles.logo}>HomePlate</span>
-        </div>
-        <div style={styles.headerRight}>
-          <div style={styles.cartBadgeWrap}>
-            <button style={styles.cartBtn} onClick={() => alert("Cart coming soon!")}>🛒 Cart</button>
-            {cart.length > 0 && <span style={styles.badge}>{cart.length}</span>}
+    <div className="min-h-screen bg-[#FDFBF7]" data-testid="customer-dashboard">
+      <Toaster position="top-right" richColors />
+      
+      {/* Header */}
+      <header className="sticky top-0 z-40 bg-[#FDFBF7]/90 backdrop-blur-md border-b border-[#EAE0D5]">
+        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-[#D05A45] rounded-full flex items-center justify-center">
+              <ChefHat className="w-5 h-5 text-white" strokeWidth={1.5} />
+            </div>
+            <div>
+              <span className="font-heading text-xl font-semibold text-[#3B2E2A]">Home Plate</span>
+              <p className="text-xs text-[#75635C]">Welcome, {user ? user.name : ''}</p>
+            </div>
           </div>
-          <button style={styles.signOutBtn} onClick={() => { sessionStorage.clear(); navigate("/"); }}>Sign Out</button>
+          
+          <div className="flex items-center gap-4">
+            <button 
+              onClick={() => setShowOrderDialog(true)}
+              className="relative p-2 text-[#75635C] hover:text-[#D05A45] transition-colors"
+              data-testid="cart-btn"
+            >
+              <ShoppingBag className="w-6 h-6" strokeWidth={1.5} />
+              {cart.length > 0 && (
+                <span className="absolute -top-1 -right-1 w-5 h-5 bg-[#D05A45] text-white text-xs rounded-full flex items-center justify-center">
+                  {cart.reduce((sum, item) => sum + item.quantity, 0)}
+                </span>
+              )}
+            </button>
+            <button 
+              onClick={handleLogout}
+              className="flex items-center gap-2 text-[#75635C] hover:text-[#D05A45] transition-colors"
+              data-testid="logout-btn"
+            >
+              <LogOut className="w-5 h-5" strokeWidth={1.5} />
+              <span className="hidden sm:inline">Logout</span>
+            </button>
+          </div>
         </div>
       </header>
 
-      <div style={styles.hero}>
-        <h1 style={styles.heroTitle}>What are you craving today?</h1>
-        <p style={styles.heroSub}>Homemade food, made with love, near you</p>
-        <div style={styles.searchWrap}>
-          <span style={styles.searchIcon}>🔍</span>
-          <input type="text" placeholder="Search dishes, sellers…" value={search}
-            onChange={(e) => setSearch(e.target.value)} style={styles.searchInput} />
-        </div>
-      </div>
+      {/* Main Content */}
+      <main className="max-w-7xl mx-auto px-6 py-8">
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList className="bg-[#F5EFE6] p-1 rounded-xl mb-8">
+            <TabsTrigger 
+              value="browse" 
+              className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm px-6"
+              data-testid="browse-tab"
+            >
+              Browse
+            </TabsTrigger>
+            <TabsTrigger 
+              value="favorites"
+              className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm px-6"
+              data-testid="favorites-tab"
+            >
+              Favorites ({favorites.length})
+            </TabsTrigger>
+            <TabsTrigger 
+              value="orders"
+              className="rounded-lg data-[state=active]:bg-white data-[state=active]:shadow-sm px-6"
+              data-testid="orders-tab"
+            >
+              Orders ({orders.length})
+            </TabsTrigger>
+          </TabsList>
 
-      <div style={styles.categories}>
-        {CATEGORIES.map((cat) => (
-          <button key={cat} style={{
-            ...styles.catBtn,
-            background: activeCategory === cat ? "#ff7043" : "#fff",
-            color: activeCategory === cat ? "#fff" : "#555",
-            border: activeCategory === cat ? "1.5px solid #ff7043" : "1.5px solid #e0e0e0",
-          }} onClick={() => setActiveCategory(cat)}>{cat}</button>
-        ))}
-      </div>
+          <TabsContent value="browse" className="mt-0">
+            {/* Search & Filter */}
+            <div className="flex flex-col sm:flex-row gap-4 mb-8">
+              <div className="relative flex-1">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#75635C]" strokeWidth={1.5} />
+                <input
+                  type="text"
+                  placeholder="Search for dishes..."
+                  value={searchQuery}
+                  onChange={(e: ChangeEvent<HTMLInputElement>) => setSearchQuery(e.target.value)}
+                  className="w-full hp-input pl-12 pr-4 py-3"
+                  data-testid="search-input"
+                />
+              </div>
+              <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+                <SelectTrigger className="w-full sm:w-48 hp-input" data-testid="category-filter">
+                  <Filter className="w-4 h-4 mr-2" strokeWidth={1.5} />
+                  <SelectValue placeholder="Category" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Categories</SelectItem>
+                  {categories.map(cat => (
+                    <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
-      <div style={styles.section}>
-        <h2 style={styles.sectionTitle}>{filtered.length} listings nearby</h2>
-        <div style={styles.grid}>
-          {filtered.map((item) => {
-            const inCart = cart.includes(item.id);
-            return (
-              <div key={item.id} style={styles.card}>
-                <div style={styles.cardEmoji}>{item.emoji}</div>
-                <div style={styles.cardBody}>
-                  <div style={styles.cardTags}>
-                    {item.tags.map((t) => <span key={t} style={styles.tag}>{t}</span>)}
-                  </div>
-                  <h3 style={styles.dishName}>{item.dish}</h3>
-                  <p style={styles.sellerName}>by {item.seller}</p>
-                  <div style={styles.cardMeta}>
-                    <span style={styles.rating}>⭐ {item.rating}</span>
-                    <span style={styles.distance}>📍 {item.distance}</span>
-                  </div>
-                  <div style={styles.cardFooter}>
-                    <span style={styles.price}>${item.price}</span>
-                    <button style={{
-                      ...styles.addBtn,
-                      background: inCart ? "#e8f5e9" : "#ff7043",
-                      color: inCart ? "#388e3c" : "#fff",
-                      border: inCart ? "1.5px solid #a5d6a7" : "none",
-                    }} onClick={() => toggleCart(item.id)}>
-                      {inCart ? "✓ Added" : "+ Add"}
+            {cart.length > 0 && (
+              <div className="mb-6 p-4 bg-[#F5EFE6] rounded-xl flex items-center justify-between">
+                <p className="text-sm text-[#75635C]">
+                  <span className="font-medium text-[#3B2E2A]">{cart.length} items</span> in cart from {cart[0].seller_name}
+                </p>
+                <button
+                  onClick={() => setCart([])}
+                  className="text-sm text-[#D05A45] hover:underline"
+                  data-testid="clear-cart-btn"
+                >
+                  Clear Cart
+                </button>
+              </div>
+            )}
+
+            {/* Food Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {filteredItems.map(item => (
+                <div key={item.id} className="hp-card hp-card-hover group" data-testid={`food-item-${item.id}`}>
+                  <div className="relative aspect-[4/3] overflow-hidden">
+                    <img 
+                      src={item.image_url || 'https://images.pexels.com/photos/7111387/pexels-photo-7111387.jpeg'} 
+                      alt={item.name}
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
+                    />
+                    <button
+                      onClick={() => toggleFavorite(item)}
+                      className="absolute top-3 right-3 w-10 h-10 bg-white/90 backdrop-blur rounded-full flex items-center justify-center hover:bg-white transition-colors"
+                      data-testid={`favorite-btn-${item.id}`}
+                    >
+                      <Heart 
+                        className={`w-5 h-5 ${item.is_favorite ? 'fill-[#D05A45] text-[#D05A45]' : 'text-[#75635C]'}`} 
+                        strokeWidth={1.5} 
+                      />
                     </button>
+                    <div className="absolute bottom-3 left-3">
+                      <span className="hp-badge">{item.category}</span>
+                    </div>
+                  </div>
+                  <div className="p-5">
+                    <div className="flex items-start justify-between mb-2">
+                      <h3 
+                        className="font-heading text-lg font-medium text-[#3B2E2A] cursor-pointer hover:text-[#D05A45]"
+                        onClick={() => viewItemDetails(item)}
+                      >
+                        {item.name}
+                      </h3>
+                      <span className="text-lg font-semibold text-[#D05A45]">${item.price.toFixed(2)}</span>
+                    </div>
+                    <p className="text-sm text-[#75635C] mb-3 line-clamp-2">{item.description}</p>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1">
+                        <Star className="w-4 h-4 fill-[#E89B27] text-[#E89B27]" strokeWidth={1.5} />
+                        <span className="text-sm font-medium text-[#3B2E2A]">{item.avg_rating.toFixed(1)}</span>
+                        <span className="text-sm text-[#75635C]">({item.review_count})</span>
+                      </div>
+                      <button
+                        onClick={() => addToCart(item)}
+                        disabled={currentSeller !== null && currentSeller !== item.seller_id}
+                        className="hp-btn-primary text-sm px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                        data-testid={`add-to-cart-${item.id}`}
+                      >
+                        Add to Cart
+                      </button>
+                    </div>
+                    <p className="text-xs text-[#75635C] mt-3">by {item.seller_name}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {filteredItems.length === 0 && (
+              <div className="text-center py-16">
+                <Search className="w-12 h-12 text-[#EAE0D5] mx-auto mb-4" strokeWidth={1.5} />
+                <p className="text-[#75635C]">No food items found</p>
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="favorites" className="mt-0">
+            {favorites.length === 0 ? (
+              <div className="text-center py-16">
+                <HeartOff className="w-12 h-12 text-[#EAE0D5] mx-auto mb-4" strokeWidth={1.5} />
+                <p className="text-[#75635C]">No favorites yet</p>
+                <p className="text-sm text-[#75635C] mt-1">Browse and add items to your favorites</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {favorites.map(item => (
+                  <div key={item.id} className="hp-card hp-card-hover group" data-testid={`favorite-item-${item.id}`}>
+                    <div className="relative aspect-[4/3] overflow-hidden">
+                      <img 
+                        src={item.image_url || 'https://images.pexels.com/photos/7111387/pexels-photo-7111387.jpeg'} 
+                        alt={item.name}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
+                      />
+                      <button
+                        onClick={() => toggleFavorite(item)}
+                        className="absolute top-3 right-3 w-10 h-10 bg-white/90 backdrop-blur rounded-full flex items-center justify-center hover:bg-white transition-colors"
+                      >
+                        <Heart className="w-5 h-5 fill-[#D05A45] text-[#D05A45]" strokeWidth={1.5} />
+                      </button>
+                    </div>
+                    <div className="p-5">
+                      <h3 className="font-heading text-lg font-medium text-[#3B2E2A]">{item.name}</h3>
+                      <p className="text-lg font-semibold text-[#D05A45] mt-1">${item.price.toFixed(2)}</p>
+                      <button
+                        onClick={() => addToCart(item)}
+                        className="mt-3 w-full hp-btn-primary text-sm py-2"
+                      >
+                        Add to Cart
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="orders" className="mt-0">
+            {orders.length === 0 ? (
+              <div className="text-center py-16">
+                <Clock className="w-12 h-12 text-[#EAE0D5] mx-auto mb-4" strokeWidth={1.5} />
+                <p className="text-[#75635C]">No orders yet</p>
+                <p className="text-sm text-[#75635C] mt-1">Start browsing and place your first order</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {orders.map(order => (
+                  <div key={order.id} className="hp-card p-6" data-testid={`order-${order.id}`}>
+                    <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
+                      <div>
+                        <p className="text-sm text-[#75635C]">Order #{order.id.slice(-8)}</p>
+                        <p className="font-heading text-lg font-medium text-[#3B2E2A]">
+                          From {order.seller_name}
+                        </p>
+                      </div>
+                      <span className={`px-3 py-1 rounded-full text-sm font-medium capitalize ${getStatusColor(order.status)}`}>
+                        {order.status}
+                      </span>
+                    </div>
+                    <div className="border-t border-[#EAE0D5] pt-4">
+                      {order.items.map((item, idx) => (
+                        <div key={idx} className="flex justify-between text-sm py-1">
+                          <span className="text-[#3B2E2A]">{item.quantity}x {item.name}</span>
+                          <span className="text-[#75635C]">${item.subtotal.toFixed(2)}</span>
+                        </div>
+                      ))}
+                      <div className="flex justify-between font-medium mt-2 pt-2 border-t border-[#EAE0D5]">
+                        <span className="text-[#3B2E2A]">Total</span>
+                        <span className="text-[#D05A45]">${order.total_amount.toFixed(2)}</span>
+                      </div>
+                    </div>
+                    <div className="mt-4 flex items-center gap-2 text-sm text-[#75635C]">
+                      <MapPin className="w-4 h-4" strokeWidth={1.5} />
+                      {order.delivery_address}
+                    </div>
+                    <p className="text-xs text-[#75635C] mt-2">
+                      Ordered on {new Date(order.created_at).toLocaleDateString()}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </TabsContent>
+        </Tabs>
+      </main>
+
+      {/* Order Dialog */}
+      <Dialog open={showOrderDialog} onOpenChange={setShowOrderDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-heading text-2xl">Your Cart</DialogTitle>
+            <DialogDescription>Review your order and checkout</DialogDescription>
+          </DialogHeader>
+          
+          {cart.length === 0 ? (
+            <div className="text-center py-8">
+              <ShoppingBag className="w-12 h-12 text-[#EAE0D5] mx-auto mb-4" strokeWidth={1.5} />
+              <p className="text-[#75635C]">Your cart is empty</p>
+            </div>
+          ) : (
+            <>
+              <div className="space-y-3 max-h-60 overflow-y-auto">
+                {cart.map(item => (
+                  <div key={item.id} className="flex items-center gap-4 p-3 bg-[#F5EFE6] rounded-xl">
+                    <img 
+                      src={item.image_url || 'https://images.pexels.com/photos/7111387/pexels-photo-7111387.jpeg'} 
+                      alt={item.name}
+                      className="w-16 h-16 object-cover rounded-lg"
+                    />
+                    <div className="flex-1">
+                      <p className="font-medium text-[#3B2E2A]">{item.name}</p>
+                      <p className="text-sm text-[#D05A45]">${item.price.toFixed(2)}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => updateCartQuantity(item.id, -1)}
+                        className="w-8 h-8 rounded-full bg-white flex items-center justify-center hover:bg-[#EAE0D5]"
+                        data-testid={`decrease-qty-${item.id}`}
+                      >
+                        <Minus className="w-4 h-4" strokeWidth={1.5} />
+                      </button>
+                      <span className="w-8 text-center font-medium">{item.quantity}</span>
+                      <button
+                        onClick={() => updateCartQuantity(item.id, 1)}
+                        className="w-8 h-8 rounded-full bg-white flex items-center justify-center hover:bg-[#EAE0D5]"
+                        data-testid={`increase-qty-${item.id}`}
+                      >
+                        <Plus className="w-4 h-4" strokeWidth={1.5} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              
+              <div className="border-t border-[#EAE0D5] pt-4 mt-4">
+                <div className="flex justify-between text-lg font-medium mb-4">
+                  <span>Total</span>
+                  <span className="text-[#D05A45]">${cartTotal.toFixed(2)}</span>
+                </div>
+                
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium text-[#3B2E2A] mb-1">Delivery Address *</label>
+                    <input
+                      type="text"
+                      value={deliveryAddress}
+                      onChange={(e: ChangeEvent<HTMLInputElement>) => setDeliveryAddress(e.target.value)}
+                      placeholder="Enter your delivery address"
+                      className="w-full hp-input px-4 py-3"
+                      data-testid="delivery-address-input"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-[#3B2E2A] mb-1">Notes (optional)</label>
+                    <input
+                      type="text"
+                      value={orderNotes}
+                      onChange={(e: ChangeEvent<HTMLInputElement>) => setOrderNotes(e.target.value)}
+                      placeholder="Any special instructions?"
+                      className="w-full hp-input px-4 py-3"
+                      data-testid="order-notes-input"
+                    />
                   </div>
                 </div>
               </div>
-            );
-          })}
-        </div>
-        {filtered.length === 0 && (
-          <div style={styles.empty}><span style={{ fontSize: 48 }}>🍽️</span><p>No listings found.</p></div>
-        )}
-      </div>
+              
+              <DialogFooter>
+                <button
+                  onClick={() => setShowOrderDialog(false)}
+                  className="hp-btn-secondary"
+                >
+                  Continue Shopping
+                </button>
+                <button
+                  onClick={placeOrder}
+                  disabled={orderLoading || !deliveryAddress.trim()}
+                  className="hp-btn-primary flex items-center gap-2 disabled:opacity-50"
+                  data-testid="place-order-btn"
+                >
+                  {orderLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Placing Order...
+                    </>
+                  ) : (
+                    'Place Order'
+                  )}
+                </button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Item Details Dialog */}
+      <Dialog open={showItemDialog} onOpenChange={setShowItemDialog}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          {selectedItem && (
+            <>
+              <img 
+                src={selectedItem.image_url || 'https://images.pexels.com/photos/7111387/pexels-photo-7111387.jpeg'} 
+                alt={selectedItem.name}
+                className="w-full h-48 object-cover rounded-lg mb-4"
+              />
+              <DialogHeader>
+                <DialogTitle className="font-heading text-2xl">{selectedItem.name}</DialogTitle>
+                <DialogDescription>{selectedItem.description}</DialogDescription>
+              </DialogHeader>
+              
+              <div className="flex items-center gap-4 my-4">
+                <span className="text-2xl font-semibold text-[#D05A45]">${selectedItem.price.toFixed(2)}</span>
+                <span className="hp-badge">{selectedItem.category}</span>
+                <div className="flex items-center gap-1">
+                  <Star className="w-4 h-4 fill-[#E89B27] text-[#E89B27]" strokeWidth={1.5} />
+                  <span className="font-medium">{selectedItem.avg_rating.toFixed(1)}</span>
+                </div>
+              </div>
+              
+              <p className="text-sm text-[#75635C]">By {selectedItem.seller_name}</p>
+              
+              <div className="border-t border-[#EAE0D5] my-4 pt-4">
+                <h4 className="font-heading text-lg font-medium mb-4">Reviews ({reviews.length})</h4>
+                
+                {reviews.length === 0 ? (
+                  <p className="text-sm text-[#75635C]">No reviews yet. Be the first to review!</p>
+                ) : (
+                  <div className="space-y-3 max-h-40 overflow-y-auto mb-4">
+                    {reviews.map(review => (
+                      <div key={review.id} className="bg-[#F5EFE6] p-3 rounded-xl">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-medium text-sm">{review.customer_name}</span>
+                          <div className="flex items-center"> 
+                            {[...Array(5)].map((_, i) => (
+                              <Star 
+                                key={i} 
+                                className={`w-3 h-3 ${i < review.rating ? 'fill-[#E89B27] text-[#E89B27]' : 'text-[#EAE0D5]'}`} 
+                                strokeWidth={1.5} 
+                              />
+                            ))}
+                          </div>
+                        </div>
+                        <p className="text-sm text-[#75635C]">{review.comment}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                
+                <div className="border-t border-[#EAE0D5] pt-4">
+                  <h5 className="font-medium mb-3">Write a Review</h5>
+                  <div className="flex items-center gap-2 mb-3">
+                    {[1, 2, 3, 4, 5].map(star => (
+                      <button
+                        key={star}
+                        onClick={() => setNewReview(prev => ({ ...prev, rating: star }))}
+                        className="p-1"
+                        data-testid={`rating-star-${star}`}
+                      >
+                        <Star 
+                          className={`w-6 h-6 ${star <= newReview.rating ? 'fill-[#E89B27] text-[#E89B27]' : 'text-[#EAE0D5]'}`} 
+                          strokeWidth={1.5} 
+                        />
+                      </button>
+                    ))}
+                  </div>
+                  <textarea
+                    value={newReview.comment}
+                    onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setNewReview(prev => ({ ...prev, comment: e.target.value }))}
+                    placeholder="Share your experience..."
+                    className="w-full hp-input px-4 py-3 min-h-[80px] resize-none"
+                    data-testid="review-comment-input"
+                  />
+                  <button
+                    onClick={submitReview}
+                    disabled={reviewLoading}
+                    className="mt-3 hp-btn-primary w-full flex items-center justify-center gap-2"
+                    data-testid="submit-review-btn"
+                  >
+                    {reviewLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                    Submit Review
+                  </button>
+                </div>
+              </div>
+              
+              <button
+                onClick={() => {
+                  addToCart(selectedItem);
+                  setShowItemDialog(false);
+                }}
+                className="w-full hp-btn-primary mt-4"
+                data-testid="dialog-add-to-cart-btn"
+              >
+                Add to Cart - ${selectedItem.price.toFixed(2)}
+              </button>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
 
-const styles: { [key: string]: React.CSSProperties } = {
-  page: { minHeight: "100vh", background: "#fafafa", fontFamily: "'Segoe UI', sans-serif" },
-  header: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 32px", background: "#fff", boxShadow: "0 2px 8px rgba(0,0,0,0.06)", position: "sticky", top: 0, zIndex: 10 },
-  headerLeft: { display: "flex", alignItems: "center", gap: 8 },
-  logo: { fontWeight: 700, fontSize: 20, background: "linear-gradient(135deg, #e64a19, #f57f17)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", fontFamily: "'Georgia', serif" },
-  headerRight: { display: "flex", alignItems: "center", gap: 12 },
-  cartBadgeWrap: { position: "relative" },
-  cartBtn: { background: "#fff3ee", border: "1.5px solid #ffccbc", borderRadius: 50, padding: "8px 16px", cursor: "pointer", fontSize: 14, fontWeight: 600, color: "#e64a19" },
-  badge: { position: "absolute", top: -6, right: -6, background: "#e53935", color: "#fff", borderRadius: "50%", width: 18, height: 18, fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" },
-  signOutBtn: { background: "none", border: "1.5px solid #e0e0e0", borderRadius: 50, padding: "8px 16px", cursor: "pointer", fontSize: 13, color: "#888" },
-  hero: { background: "linear-gradient(135deg, #ff7043 0%, #ffb74d 100%)", padding: "48px 32px 60px", textAlign: "center", color: "#fff" },
-  heroTitle: { fontSize: 34, fontWeight: 700, margin: "0 0 8px", fontFamily: "'Georgia', serif" },
-  heroSub: { fontSize: 16, opacity: 0.9, margin: "0 0 28px" },
-  searchWrap: { display: "flex", alignItems: "center", background: "#fff", borderRadius: 50, padding: "12px 20px", maxWidth: 500, margin: "0 auto", gap: 10, boxShadow: "0 4px 20px rgba(0,0,0,0.12)" },
-  searchIcon: { fontSize: 18 },
-  searchInput: { border: "none", outline: "none", fontSize: 15, flex: 1, fontFamily: "'Segoe UI', sans-serif", color: "#333" },
-  categories: { display: "flex", gap: 10, padding: "20px 32px", overflowX: "auto" as const, background: "#fff", borderBottom: "1px solid #f0f0f0" },
-  catBtn: { borderRadius: 50, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" as const, transition: "all 0.2s ease" },
-  section: { padding: "28px 32px", maxWidth: 1100, margin: "0 auto" },
-  sectionTitle: { fontSize: 18, fontWeight: 600, color: "#555", margin: "0 0 20px" },
-  grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 20 },
-  card: { background: "#fff", borderRadius: 16, overflow: "hidden", boxShadow: "0 2px 12px rgba(0,0,0,0.07)" },
-  cardEmoji: { fontSize: 64, textAlign: "center", padding: "24px 0 16px", background: "linear-gradient(160deg, #fff8f5, #ffe8df)", display: "block" },
-  cardBody: { padding: "16px 18px 18px" },
-  cardTags: { display: "flex", gap: 6, flexWrap: "wrap" as const, marginBottom: 8 },
-  tag: { background: "#fff3e0", color: "#e65100", borderRadius: 50, padding: "2px 10px", fontSize: 11, fontWeight: 600 },
-  dishName: { fontSize: 16, fontWeight: 700, margin: "0 0 4px", color: "#2d2d2d" },
-  sellerName: { fontSize: 13, color: "#888", margin: "0 0 10px" },
-  cardMeta: { display: "flex", gap: 14, marginBottom: 14 },
-  rating: { fontSize: 13, color: "#555", fontWeight: 600 },
-  distance: { fontSize: 13, color: "#888" },
-  cardFooter: { display: "flex", alignItems: "center", justifyContent: "space-between" },
-  price: { fontSize: 20, fontWeight: 700, color: "#e64a19" },
-  addBtn: { padding: "8px 16px", borderRadius: 50, border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer", transition: "all 0.2s ease" },
-  empty: { textAlign: "center", padding: "60px 0", color: "#aaa", fontSize: 16 },
-};
-
-export default BuyerPage;
+export default CustomerDashboard;

@@ -853,26 +853,27 @@ app.add_middleware(
 )
 
 # Startup event
-@app.on_event("startup")
-async def startup():
-    # Write test credentials
-    Path("/app/memory").mkdir(exist_ok=True)
-    with open("/app/memory/test_credentials.md", "w") as f:
-        f.write("# Test Credentials\n\n")
-        f.write("## Test Customer\n")
-        f.write("- Email: customer@test.com\n")
-        f.write("- Password: Test123!\n")
-        f.write("- Role: customer\n\n")
-        f.write("## Test Seller\n")
-        f.write("- Email: seller@test.com\n")
-        f.write("- Password: Test123!\n")
-        f.write("- Role: seller\n\n")
-        f.write("## Database\n")
-        f.write("- Using: Supabase PostgreSQL\n\n")
-        f.write("## Endpoints\n")
-        f.write("- POST /api/auth/register\n")
-        f.write("- POST /api/auth/login\n")
-        f.write("- POST /api/auth/logout\n")
-        f.write("- GET /api/auth/me\n")
+# @app.on_event("startup")
+# async def startup():
+#     # Write test credentials
+#     memory_path = Path(__file__).parent / "memory"
+#     memory_path.mkdir(exist_ok=True)
+#     with open(memory_path / "test_credentials.md", "w") as f:   
+#         f.write("# Test Credentials\n\n")
+#         f.write("## Test Customer\n")
+#         f.write("- Email: customer@test.com\n")
+#         f.write("- Password: Test123!\n")
+#         f.write("- Role: customer\n\n")
+#         f.write("## Test Seller\n")
+#         f.write("- Email: seller@test.com\n")
+#         f.write("- Password: Test123!\n")
+#         f.write("- Role: seller\n\n")
+#         f.write("## Database\n")
+#         f.write("- Using: Supabase PostgreSQL\n\n")
+#         f.write("## Endpoints\n")
+#         f.write("- POST /api/auth/register\n")
+#         f.write("- POST /api/auth/login\n")
+#         f.write("- POST /api/auth/logout\n")
+#         f.write("- GET /api/auth/me\n")
     
-    logger.info("Home Plate API started with Supabase database")
+    # logger.info("Home Plate API started with Supabase database")
