@@ -3,9 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
 import { FoodItem, Order, CartItem, Review } from '../types';
-import { 
-  ChefHat, Search, Heart, ShoppingBag, Clock, Star, LogOut, 
-  Filter, Plus, Minus, MapPin, Loader2, HeartOff
+import {
+  ChefHat, Search, Heart, ShoppingBag, Clock, Star, LogOut,
+  Filter, Plus, Minus, MapPin, Loader2, HeartOff, RotateCcw, DollarSign
 } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog';
@@ -27,7 +27,10 @@ const CustomerDashboard: React.FC = () => {
   
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  
+  const [sortBy, setSortBy] = useState<string>('newest');
+  const [minPrice, setMinPrice] = useState<string>('');
+  const [maxPrice, setMaxPrice] = useState<string>('');
+
   const [cart, setCart] = useState<CartItem[]>([]);
   const [showOrderDialog, setShowOrderDialog] = useState<boolean>(false);
   const [deliveryAddress, setDeliveryAddress] = useState<string>('');
@@ -124,6 +127,34 @@ const CustomerDashboard: React.FC = () => {
     });
   };
 
+  const reorderItems = (order: Order): void => {
+    const newCartItems: CartItem[] = [];
+    const unavailableNames: string[] = [];
+
+    for (const orderItem of order.items) {
+      const foodItem = foodItems.find(f => f.id === orderItem.food_item_id);
+      if (foodItem) {
+        newCartItems.push({ ...foodItem, quantity: orderItem.quantity });
+      } else {
+        unavailableNames.push(orderItem.name);
+      }
+    }
+
+    if (newCartItems.length === 0) {
+      toast.error('None of these items are available anymore');
+      return;
+    }
+
+    setCart(newCartItems);
+    setShowOrderDialog(true);
+
+    if (unavailableNames.length > 0) {
+      toast.warning(`Added to cart. No longer available: ${unavailableNames.join(', ')}`);
+    } else {
+      toast.success('Items added to cart');
+    }
+  };
+
   const cartTotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
   const currentSeller = cart.length > 0 ? cart[0].seller_id : null;
 
@@ -200,14 +231,33 @@ const CustomerDashboard: React.FC = () => {
     }
   };
 
-  const filteredItems = foodItems.filter(item => {
-    const matchesSearch = !searchQuery || 
-      item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.description.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCategory = selectedCategory === 'all' || item.category === selectedCategory;
-    const matchesSeller = !currentSeller || cart.length === 0 || item.seller_id === currentSeller;
-    return matchesSearch && matchesCategory && matchesSeller;
-  });
+  const parsedMinPrice = minPrice.trim() === '' ? null : parseFloat(minPrice);
+  const parsedMaxPrice = maxPrice.trim() === '' ? null : parseFloat(maxPrice);
+
+  const filteredItems = foodItems
+    .filter(item => {
+      const matchesSearch = !searchQuery ||
+        item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        item.description.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesCategory = selectedCategory === 'all' || item.category === selectedCategory;
+      const matchesSeller = !currentSeller || cart.length === 0 || item.seller_id === currentSeller;
+      const matchesMinPrice = parsedMinPrice === null || isNaN(parsedMinPrice) || item.price >= parsedMinPrice;
+      const matchesMaxPrice = parsedMaxPrice === null || isNaN(parsedMaxPrice) || item.price <= parsedMaxPrice;
+      return matchesSearch && matchesCategory && matchesSeller && matchesMinPrice && matchesMaxPrice;
+    })
+    .sort((a, b) => {
+      switch (sortBy) {
+        case 'price_asc':
+          return a.price - b.price;
+        case 'price_desc':
+          return b.price - a.price;
+        case 'rating':
+          return b.avg_rating - a.avg_rating;
+        case 'newest':
+        default:
+          return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      }
+    });
 
   const getStatusColor = (status: string): string => {
     const colors: Record<string, string> = {
@@ -324,6 +374,54 @@ const CustomerDashboard: React.FC = () => {
                   ))}
                 </SelectContent>
               </Select>
+              <Select value={sortBy} onValueChange={setSortBy}>
+                <SelectTrigger className="w-full sm:w-48 hp-input" data-testid="sort-select">
+                  <SelectValue placeholder="Sort by" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="newest">Newest</SelectItem>
+                  <SelectItem value="price_asc">Price: Low to High</SelectItem>
+                  <SelectItem value="price_desc">Price: High to Low</SelectItem>
+                  <SelectItem value="rating">Highest Rated</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3 mb-8">
+              <div className="flex items-center gap-1 text-sm text-[#75635C]">
+                <DollarSign className="w-4 h-4" strokeWidth={1.5} />
+                Price range
+              </div>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="Min"
+                value={minPrice}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setMinPrice(e.target.value)}
+                className="w-24 hp-input px-3 py-2"
+                data-testid="min-price-input"
+              />
+              <span className="text-[#75635C]">–</span>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="Max"
+                value={maxPrice}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setMaxPrice(e.target.value)}
+                className="w-24 hp-input px-3 py-2"
+                data-testid="max-price-input"
+              />
+              {(minPrice || maxPrice) && (
+                <button
+                  onClick={() => { setMinPrice(''); setMaxPrice(''); }}
+                  className="text-sm text-[#D05A45] hover:underline"
+                  data-testid="clear-price-filter-btn"
+                >
+                  Clear
+                </button>
+              )}
             </div>
 
             {cart.length > 0 && (
@@ -483,9 +581,19 @@ const CustomerDashboard: React.FC = () => {
                       <MapPin className="w-4 h-4" strokeWidth={1.5} />
                       {order.delivery_address}
                     </div>
-                    <p className="text-xs text-[#75635C] mt-2">
-                      Ordered on {new Date(order.created_at).toLocaleDateString()}
-                    </p>
+                    <div className="mt-4 flex items-center justify-between gap-4">
+                      <p className="text-xs text-[#75635C]">
+                        Ordered on {new Date(order.created_at).toLocaleDateString()}
+                      </p>
+                      <button
+                        onClick={() => reorderItems(order)}
+                        className="flex items-center gap-2 text-sm font-medium text-[#D05A45] hover:underline"
+                        data-testid={`reorder-btn-${order.id}`}
+                      >
+                        <RotateCcw className="w-4 h-4" strokeWidth={1.5} />
+                        Order Again
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
