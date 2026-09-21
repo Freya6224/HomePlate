@@ -1,9 +1,9 @@
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, WebSocket, WebSocketDisconnect
 from starlette.middleware.cors import CORSMiddleware
-from sqlalchemy import select, func, update, delete
+from sqlalchemy import select, func, update, delete, or_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 import os
@@ -13,7 +13,7 @@ import jwt
 import random
 from pathlib import Path
 from pydantic import BaseModel, Field, EmailStr
-from typing import List, Optional
+from typing import Dict, List, Optional
 from datetime import datetime, timezone, timedelta
 from enum import Enum
 
@@ -61,6 +61,41 @@ def create_refresh_token(user_id: str) -> str:
     }
     return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
+# Real-time order updates via WebSocket
+class ConnectionManager:
+    def __init__(self) -> None:
+        self.active_connections: Dict[str, List[WebSocket]] = {}
+
+    async def connect(self, user_id: str, websocket: WebSocket) -> None:
+        await websocket.accept()
+        self.active_connections.setdefault(user_id, []).append(websocket)
+
+    def disconnect(self, user_id: str, websocket: WebSocket) -> None:
+        connections = self.active_connections.get(user_id)
+        if connections and websocket in connections:
+            connections.remove(websocket)
+            if not connections:
+                del self.active_connections[user_id]
+
+    async def send_to_user(self, user_id: str, message: dict) -> None:
+        for connection in list(self.active_connections.get(user_id, [])):
+            try:
+                await connection.send_json(message)
+            except Exception:
+                self.disconnect(user_id, connection)
+
+manager = ConnectionManager()
+
+async def broadcast_order_event(order: "Order", event_type: str) -> None:
+    payload = {
+        "type": event_type,
+        "order_id": order.id,
+        "status": order.status,
+    }
+    await manager.send_to_user(order.customer_id, payload)
+    if order.seller_id:
+        await manager.send_to_user(order.seller_id, payload)
+
 # Create the main app
 app = FastAPI(title="Home Plate API")
 
@@ -104,6 +139,7 @@ class FoodItemCreate(BaseModel):
     price: float
     category: str
     is_available: bool = True
+    quantity_available: Optional[int] = Field(default=None, ge=0)
     image_url: Optional[str] = None
 
 class FoodItemUpdate(BaseModel):
@@ -112,6 +148,7 @@ class FoodItemUpdate(BaseModel):
     price: Optional[float] = None
     category: Optional[str] = None
     is_available: Optional[bool] = None
+    quantity_available: Optional[int] = Field(default=None, ge=0)
     image_url: Optional[str] = None
 
 class OrderItemCreate(BaseModel):
@@ -286,6 +323,31 @@ async def refresh_token(request: Request, response: Response, db: AsyncSession =
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
+# ============ REAL-TIME ORDER UPDATES ============
+
+@api_router.websocket("/ws")
+async def orders_websocket(websocket: WebSocket):
+    token = websocket.cookies.get("access_token")
+    if not token:
+        await websocket.close(code=4401)
+        return
+    try:
+        payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+        if payload.get("type") != "access":
+            await websocket.close(code=4401)
+            return
+        user_id = payload["sub"]
+    except jwt.InvalidTokenError:
+        await websocket.close(code=4401)
+        return
+
+    await manager.connect(user_id, websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(user_id, websocket)
+
 # ============ FOOD ITEMS ROUTES ============
 
 @api_router.post("/food-items")
@@ -302,16 +364,17 @@ async def create_food_item(item: FoodItemCreate, user: dict = Depends(get_curren
         price=item.price,
         category=item.category,
         is_available=item.is_available,
+        quantity_available=item.quantity_available,
         image_url=image_url
     )
     db.add(food_item)
     await db.commit()
     await db.refresh(food_item)
-    
+
     # Get seller name
     result = await db.execute(select(User).where(User.id == user["id"]))
     seller = result.scalar_one_or_none()
-    
+
     return {
         "id": food_item.id,
         "seller_id": food_item.seller_id,
@@ -321,11 +384,19 @@ async def create_food_item(item: FoodItemCreate, user: dict = Depends(get_curren
         "price": food_item.price,
         "category": food_item.category,
         "is_available": food_item.is_available,
+        "quantity_available": food_item.quantity_available,
         "image_url": food_item.image_url,
         "avg_rating": food_item.avg_rating,
         "review_count": food_item.review_count,
         "created_at": food_item.created_at.isoformat()
     }
+
+SORT_OPTIONS = {
+    "newest": FoodItem.created_at.desc(),
+    "price_asc": FoodItem.price.asc(),
+    "price_desc": FoodItem.price.desc(),
+    "rating": FoodItem.avg_rating.desc(),
+}
 
 @api_router.get("/food-items")
 async def get_food_items(
@@ -333,13 +404,18 @@ async def get_food_items(
     category: Optional[str] = None,
     seller_id: Optional[str] = None,
     available_only: bool = True,
+    min_price: Optional[float] = None,
+    max_price: Optional[float] = None,
+    sort_by: Optional[str] = None,
+    limit: Optional[int] = None,
+    offset: int = 0,
     db: AsyncSession = Depends(get_db)
 ):
     query = select(FoodItem).options(selectinload(FoodItem.seller))
-    
+
     if search:
         query = query.where(
-            (FoodItem.name.ilike(f"%{search}%")) | 
+            (FoodItem.name.ilike(f"%{search}%")) |
             (FoodItem.description.ilike(f"%{search}%"))
         )
     if category:
@@ -348,8 +424,20 @@ async def get_food_items(
         query = query.where(FoodItem.seller_id == seller_id)
     if available_only:
         query = query.where(FoodItem.is_available == True)
-    
-    result = await db.execute(query.order_by(FoodItem.created_at.desc()))
+        query = query.where(or_(FoodItem.quantity_available.is_(None), FoodItem.quantity_available > 0))
+    if min_price is not None:
+        query = query.where(FoodItem.price >= min_price)
+    if max_price is not None:
+        query = query.where(FoodItem.price <= max_price)
+
+    query = query.order_by(SORT_OPTIONS.get(sort_by, SORT_OPTIONS["newest"]))
+
+    if offset:
+        query = query.offset(offset)
+    if limit is not None:
+        query = query.limit(limit)
+
+    result = await db.execute(query)
     items = result.scalars().all()
     
     return [
@@ -362,6 +450,7 @@ async def get_food_items(
             "price": item.price,
             "category": item.category,
             "is_available": item.is_available,
+            "quantity_available": item.quantity_available,
             "image_url": item.image_url,
             "avg_rating": item.avg_rating,
             "review_count": item.review_count,
@@ -388,6 +477,7 @@ async def get_food_item(item_id: str, db: AsyncSession = Depends(get_db)):
         "price": item.price,
         "category": item.category,
         "is_available": item.is_available,
+        "quantity_available": item.quantity_available,
         "image_url": item.image_url,
         "avg_rating": item.avg_rating,
         "review_count": item.review_count,
@@ -425,6 +515,7 @@ async def update_food_item(item_id: str, item_update: FoodItemUpdate, user: dict
         "price": item.price,
         "category": item.category,
         "is_available": item.is_available,
+        "quantity_available": item.quantity_available,
         "image_url": item.image_url,
         "avg_rating": item.avg_rating,
         "review_count": item.review_count,
@@ -467,6 +558,7 @@ async def get_my_food_items(user: dict = Depends(get_current_user), db: AsyncSes
             "price": item.price,
             "category": item.category,
             "is_available": item.is_available,
+            "quantity_available": item.quantity_available,
             "image_url": item.image_url,
             "avg_rating": item.avg_rating,
             "review_count": item.review_count,
@@ -502,7 +594,9 @@ async def create_order(order: OrderCreate, user: dict = Depends(get_current_user
             raise HTTPException(status_code=404, detail=f"Food item {item.food_item_id} not found")
         if not food.is_available:
             raise HTTPException(status_code=400, detail=f"{food.name} is not available")
-        
+        if food.quantity_available is not None and food.quantity_available < item.quantity:
+            raise HTTPException(status_code=400, detail=f"Only {food.quantity_available} of {food.name} left")
+
         if seller_id is None:
             seller_id = food.seller_id
             seller_name = food.seller.name if food.seller else "Unknown"
@@ -518,7 +612,13 @@ async def create_order(order: OrderCreate, user: dict = Depends(get_current_user
             "quantity": item.quantity,
             "subtotal": item_total
         })
-    
+
+        if food.quantity_available is not None:
+            food.quantity_available -= item.quantity
+            if food.quantity_available <= 0:
+                food.quantity_available = 0
+                food.is_available = False
+
     # Create order
     new_order = Order(
         customer_id=user["id"],
@@ -544,7 +644,9 @@ async def create_order(order: OrderCreate, user: dict = Depends(get_current_user
         )
         db.add(order_item)
     await db.commit()
-    
+
+    await broadcast_order_event(new_order, "new_order")
+
     return {
         "id": new_order.id,
         "customer_id": new_order.customer_id,
@@ -655,11 +757,27 @@ async def update_order_status(order_id: str, status: OrderStatus, user: dict = D
     else:
         if order.seller_id != user["id"]:
             raise HTTPException(status_code=403, detail="Only seller can update order status")
-    
+
+    was_cancelled = order.status == "cancelled"
     order.status = status.value
+
+    if status == OrderStatus.cancelled and not was_cancelled:
+        items_result = await db.execute(select(OrderItem).where(OrderItem.order_id == order.id))
+        for order_item in items_result.scalars().all():
+            if not order_item.food_item_id:
+                continue
+            food_result = await db.execute(select(FoodItem).where(FoodItem.id == order_item.food_item_id))
+            food = food_result.scalar_one_or_none()
+            if food and food.quantity_available is not None:
+                food.quantity_available += order_item.quantity
+                if food.quantity_available > 0:
+                    food.is_available = True
+
     await db.commit()
     await db.refresh(order)
-    
+
+    await broadcast_order_event(order, "order_status_updated")
+
     return {"id": order.id, "status": order.status, "message": "Order status updated"}
 
 # ============ FAVORITES ROUTES ============
@@ -728,6 +846,7 @@ async def get_favorites(user: dict = Depends(get_current_user), db: AsyncSession
             "price": fav.food_item.price,
             "category": fav.food_item.category,
             "is_available": fav.food_item.is_available,
+            "quantity_available": fav.food_item.quantity_available,
             "image_url": fav.food_item.image_url,
             "avg_rating": fav.food_item.avg_rating,
             "review_count": fav.food_item.review_count,

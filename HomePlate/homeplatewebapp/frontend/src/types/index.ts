@@ -15,6 +15,7 @@ export interface FoodItem {
   price: number;
   category: string;
   is_available: boolean;
+  quantity_available: number | null;
   image_url: string | null;
   avg_rating: number;
   review_count: number;

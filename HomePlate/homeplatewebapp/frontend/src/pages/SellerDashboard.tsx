@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, ChangeEvent, FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import { api } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 import { FoodItem, Order, OrderStatus } from '../types';
 import { 
@@ -11,6 +11,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Toaster, toast } from 'sonner';
+import { getOrdersWebSocketUrl } from '../lib/utils';
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
 
@@ -29,6 +30,7 @@ interface ItemForm {
   price: string;
   category: string;
   is_available: boolean;
+  quantity_available: string;
   image_url: string;
 }
 
@@ -49,6 +51,7 @@ const SellerDashboard: React.FC = () => {
     price: '',
     category: 'Main Course',
     is_available: true,
+    quantity_available: '',
     image_url: ''
   });
   const [formLoading, setFormLoading] = useState<boolean>(false);
@@ -60,8 +63,8 @@ const SellerDashboard: React.FC = () => {
     setLoading(true);
     try {
       const [itemsRes, ordersRes] = await Promise.all([
-        axios.get<FoodItem[]>(`${API_URL}/api/my-food-items`, { withCredentials: true }),
-        axios.get<Order[]>(`${API_URL}/api/orders`, { withCredentials: true })
+        api.get<FoodItem[]>(`${API_URL}/api/my-food-items`, { withCredentials: true }),
+        api.get<Order[]>(`${API_URL}/api/orders`, { withCredentials: true })
       ]);
       setFoodItems(itemsRes.data);
       setOrders(ordersRes.data);
@@ -77,6 +80,31 @@ const SellerDashboard: React.FC = () => {
     fetchData();
   }, [fetchData]);
 
+  useEffect(() => {
+    const wsUrl = getOrdersWebSocketUrl(API_URL);
+    if (!wsUrl) return;
+
+    const ws = new WebSocket(wsUrl);
+
+    ws.onmessage = (event: MessageEvent) => {
+      try {
+        const data = JSON.parse(event.data as string) as { type: string; status?: string };
+        if (data.type === 'new_order') {
+          toast.info('New order received!');
+          fetchData();
+        } else if (data.type === 'order_status_updated') {
+          fetchData();
+        }
+      } catch {
+        // ignore malformed messages
+      }
+    };
+
+    return () => {
+      ws.close();
+    };
+  }, [fetchData]);
+
   const handleLogout = async (): Promise<void> => {
     await logout();
     navigate('/');
@@ -90,6 +118,7 @@ const SellerDashboard: React.FC = () => {
       price: '',
       category: 'Main Course',
       is_available: true,
+      quantity_available: '',
       image_url: FOOD_IMAGES[Math.floor(Math.random() * FOOD_IMAGES.length)]
     });
     setShowItemDialog(true);
@@ -103,6 +132,7 @@ const SellerDashboard: React.FC = () => {
       price: item.price.toString(),
       category: item.category,
       is_available: item.is_available,
+      quantity_available: item.quantity_available !== null ? item.quantity_available.toString() : '',
       image_url: item.image_url || ''
     });
     setShowItemDialog(true);
@@ -130,7 +160,16 @@ const SellerDashboard: React.FC = () => {
       toast.error('Please enter a valid price');
       return;
     }
-    
+
+    let quantityAvailable: number | null = null;
+    if (itemForm.quantity_available.trim() !== '') {
+      quantityAvailable = parseInt(itemForm.quantity_available, 10);
+      if (isNaN(quantityAvailable) || quantityAvailable < 0) {
+        toast.error('Please enter a valid quantity (0 or more), or leave it blank for unlimited');
+        return;
+      }
+    }
+
     setFormLoading(true);
     try {
       const data = {
@@ -139,14 +178,15 @@ const SellerDashboard: React.FC = () => {
         price: price,
         category: itemForm.category,
         is_available: itemForm.is_available,
+        quantity_available: quantityAvailable,
         image_url: itemForm.image_url || null
       };
       
       if (editingItem) {
-        await axios.put(`${API_URL}/api/food-items/${editingItem.id}`, data, { withCredentials: true });
+        await api.put(`${API_URL}/api/food-items/${editingItem.id}`, data, { withCredentials: true });
         toast.success('Item updated successfully');
       } else {
-        await axios.post(`${API_URL}/api/food-items`, data, { withCredentials: true });
+        await api.post(`${API_URL}/api/food-items`, data, { withCredentials: true });
         toast.success('Item added successfully');
       }
       
@@ -170,7 +210,7 @@ const SellerDashboard: React.FC = () => {
     if (!itemToDelete) return;
     
     try {
-      await axios.delete(`${API_URL}/api/food-items/${itemToDelete.id}`, { withCredentials: true });
+      await api.delete(`${API_URL}/api/food-items/${itemToDelete.id}`, { withCredentials: true });
       toast.success('Item deleted successfully');
       setShowDeleteDialog(false);
       setItemToDelete(null);
@@ -182,7 +222,7 @@ const SellerDashboard: React.FC = () => {
 
   const updateOrderStatus = async (orderId: string, status: OrderStatus): Promise<void> => {
     try {
-      await axios.put(`${API_URL}/api/orders/${orderId}/status?status=${status}`, {}, { withCredentials: true });
+      await api.put(`${API_URL}/api/orders/${orderId}/status?status=${status}`, {}, { withCredentials: true });
       toast.success('Order status updated');
       fetchData();
     } catch (error) {
@@ -353,7 +393,7 @@ const SellerDashboard: React.FC = () => {
                       {!item.is_available && (
                         <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
                           <span className="bg-red-500 text-white px-4 py-1 rounded-full text-sm font-medium">
-                            Unavailable
+                            {item.quantity_available === 0 ? 'Sold Out' : 'Unavailable'}
                           </span>
                         </div>
                       )}
@@ -367,6 +407,11 @@ const SellerDashboard: React.FC = () => {
                         <span className="text-lg font-semibold text-[#D05A45]">${item.price.toFixed(2)}</span>
                       </div>
                       <p className="text-sm text-[#75635C] mb-4 line-clamp-2">{item.description}</p>
+                      {item.quantity_available !== null && (
+                        <p className={`text-xs font-medium mb-2 ${item.quantity_available === 0 ? 'text-red-500' : 'text-[#4A7C59]'}`} data-testid={`stock-${item.id}`}>
+                          {item.quantity_available === 0 ? 'Sold out' : `${item.quantity_available} left today`}
+                        </p>
+                      )}
                       <div className="flex items-center justify-between pt-3 border-t border-[#EAE0D5]">
                         <div className="text-xs text-[#75635C]">
                           {item.review_count} reviews • {item.avg_rating.toFixed(1)} rating
@@ -538,7 +583,23 @@ const SellerDashboard: React.FC = () => {
                 </Select>
               </div>
             </div>
-            
+
+            <div>
+              <label className="block text-sm font-medium text-[#3B2E2A] mb-1">Quantity Available</label>
+              <input
+                type="number"
+                name="quantity_available"
+                value={itemForm.quantity_available}
+                onChange={handleFormChange}
+                placeholder="Leave blank for unlimited"
+                step="1"
+                min="0"
+                className="w-full hp-input px-4 py-3"
+                data-testid="item-quantity-input"
+              />
+              <p className="text-xs text-[#75635C] mt-1">Set how many are available today. Leave blank if you don't want to track stock.</p>
+            </div>
+
             <div className="flex items-center gap-3">
               <input
                 type="checkbox"

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import axios from 'axios';
+import { api, setAuthFailureHandler } from '../lib/api';
 import { User, AuthContextType, AuthResult } from '../types';
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
@@ -31,11 +31,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     checkAuth();
   }, []);
 
+  useEffect(() => {
+    setAuthFailureHandler(() => setUser(false));
+    return () => setAuthFailureHandler(null);
+  }, []);
+
   const checkAuth = async (): Promise<void> => {
     try {
-      const response = await axios.get<User>(`${API_URL}/api/auth/me`, {
-        withCredentials: true
-      });
+      const response = await api.get<User>(`${API_URL}/api/auth/me`);
       setUser(response.data);
     } catch {
       setUser(false);
@@ -46,10 +49,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const login = async (email: string, password: string): Promise<AuthResult> => {
     try {
-      const response = await axios.post<User>(`${API_URL}/api/auth/login`, 
-        { email, password },
-        { withCredentials: true }
-      );
+      const response = await api.post<User>(`${API_URL}/api/auth/login`, { email, password });
       setUser(response.data);
       return { success: true, data: response.data };
     } catch (e: unknown) {
@@ -61,10 +61,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const register = async (email: string, password: string, name: string, role: string): Promise<AuthResult> => {
     try {
-      const response = await axios.post<User>(`${API_URL}/api/auth/register`,
-        { email, password, name, role },
-        { withCredentials: true }
-      );
+      const response = await api.post<User>(`${API_URL}/api/auth/register`, { email, password, name, role });
       setUser(response.data);
       return { success: true, data: response.data };
     } catch (e: unknown) {
@@ -76,7 +73,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const logout = async (): Promise<void> => {
     try {
-      await axios.post(`${API_URL}/api/auth/logout`, {}, { withCredentials: true });
+      await api.post(`${API_URL}/api/auth/logout`, {});
     } catch {
       // Ignore logout errors
     }

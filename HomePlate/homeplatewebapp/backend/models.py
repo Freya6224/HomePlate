@@ -37,6 +37,7 @@ class FoodItem(Base):
     price = Column(Float, nullable=False)
     category = Column(String(100), nullable=False, index=True)
     is_available = Column(Boolean, default=True, index=True)
+    quantity_available = Column(Integer, nullable=True)  # None = unlimited stock
     image_url = Column(Text, nullable=True)
     avg_rating = Column(Float, default=0.0)
     review_count = Column(Integer, default=0)

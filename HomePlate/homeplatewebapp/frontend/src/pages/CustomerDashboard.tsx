@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import { api } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 import { FoodItem, Order, CartItem, Review } from '../types';
 import {
@@ -11,6 +11,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Toaster, toast } from 'sonner';
+import { getOrdersWebSocketUrl } from '../lib/utils';
 
 const API_URL = process.env.REACT_APP_BACKEND_URL;
 
@@ -47,10 +48,10 @@ const CustomerDashboard: React.FC = () => {
     setLoading(true);
     try {
       const [itemsRes, favsRes, ordersRes, catsRes] = await Promise.all([
-        axios.get<FoodItem[]>(`${API_URL}/api/food-items`, { withCredentials: true }),
-        axios.get<FoodItem[]>(`${API_URL}/api/favorites`, { withCredentials: true }),
-        axios.get<Order[]>(`${API_URL}/api/orders`, { withCredentials: true }),
-        axios.get<string[]>(`${API_URL}/api/categories`, { withCredentials: true })
+        api.get<FoodItem[]>(`${API_URL}/api/food-items`, { withCredentials: true }),
+        api.get<FoodItem[]>(`${API_URL}/api/favorites`, { withCredentials: true }),
+        api.get<Order[]>(`${API_URL}/api/orders`, { withCredentials: true }),
+        api.get<string[]>(`${API_URL}/api/categories`, { withCredentials: true })
       ]);
       
       const favIds = new Set(favsRes.data.map(f => f.id));
@@ -75,6 +76,29 @@ const CustomerDashboard: React.FC = () => {
     fetchData();
   }, [fetchData]);
 
+  useEffect(() => {
+    const wsUrl = getOrdersWebSocketUrl(API_URL);
+    if (!wsUrl) return;
+
+    const ws = new WebSocket(wsUrl);
+
+    ws.onmessage = (event: MessageEvent) => {
+      try {
+        const data = JSON.parse(event.data as string) as { type: string; status?: string };
+        if (data.type === 'order_status_updated') {
+          toast.info(`Order status updated to ${data.status}`);
+          fetchData();
+        }
+      } catch {
+        // ignore malformed messages
+      }
+    };
+
+    return () => {
+      ws.close();
+    };
+  }, [fetchData]);
+
   const handleLogout = async (): Promise<void> => {
     await logout();
     navigate('/');
@@ -83,10 +107,10 @@ const CustomerDashboard: React.FC = () => {
   const toggleFavorite = async (item: FoodItem): Promise<void> => {
     try {
       if (item.is_favorite) {
-        await axios.delete(`${API_URL}/api/favorites/${item.id}`, { withCredentials: true });
+        await api.delete(`${API_URL}/api/favorites/${item.id}`, { withCredentials: true });
         toast.success('Removed from favorites');
       } else {
-        await axios.post(`${API_URL}/api/favorites/${item.id}`, {}, { withCredentials: true });
+        await api.post(`${API_URL}/api/favorites/${item.id}`, {}, { withCredentials: true });
         toast.success('Added to favorites');
       }
       
@@ -175,7 +199,7 @@ const CustomerDashboard: React.FC = () => {
         notes: orderNotes || null
       };
       
-      await axios.post(`${API_URL}/api/orders`, orderData, { withCredentials: true });
+      await api.post(`${API_URL}/api/orders`, orderData, { withCredentials: true });
       toast.success('Order placed successfully!');
       setCart([]);
       setShowOrderDialog(false);
@@ -195,7 +219,7 @@ const CustomerDashboard: React.FC = () => {
     setSelectedItem(item);
     setShowItemDialog(true);
     try {
-      const res = await axios.get<Review[]>(`${API_URL}/api/reviews/${item.id}`, { withCredentials: true });
+      const res = await api.get<Review[]>(`${API_URL}/api/reviews/${item.id}`, { withCredentials: true });
       setReviews(res.data);
     } catch {
       setReviews([]);
@@ -210,7 +234,7 @@ const CustomerDashboard: React.FC = () => {
     
     setReviewLoading(true);
     try {
-      await axios.post(`${API_URL}/api/reviews`, {
+      await api.post(`${API_URL}/api/reviews`, {
         food_item_id: selectedItem.id,
         rating: newReview.rating,
         comment: newReview.comment
@@ -219,7 +243,7 @@ const CustomerDashboard: React.FC = () => {
       toast.success('Review submitted!');
       setNewReview({ rating: 5, comment: '' });
       
-      const res = await axios.get<Review[]>(`${API_URL}/api/reviews/${selectedItem.id}`, { withCredentials: true });
+      const res = await api.get<Review[]>(`${API_URL}/api/reviews/${selectedItem.id}`, { withCredentials: true });
       setReviews(res.data);
       fetchData();
     } catch (error: unknown) {
@@ -474,6 +498,11 @@ const CustomerDashboard: React.FC = () => {
                       <span className="text-lg font-semibold text-[#D05A45]">${item.price.toFixed(2)}</span>
                     </div>
                     <p className="text-sm text-[#75635C] mb-3 line-clamp-2">{item.description}</p>
+                    {item.quantity_available !== null && item.quantity_available <= 5 && (
+                      <p className="text-xs font-medium text-[#C07B46] mb-2" data-testid={`stock-${item.id}`}>
+                        Only {item.quantity_available} left today
+                      </p>
+                    )}
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-1">
                         <Star className="w-4 h-4 fill-[#E89B27] text-[#E89B27]" strokeWidth={1.5} />
@@ -482,11 +511,11 @@ const CustomerDashboard: React.FC = () => {
                       </div>
                       <button
                         onClick={() => addToCart(item)}
-                        disabled={currentSeller !== null && currentSeller !== item.seller_id}
+                        disabled={(currentSeller !== null && currentSeller !== item.seller_id) || item.quantity_available === 0}
                         className="hp-btn-primary text-sm px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
                         data-testid={`add-to-cart-${item.id}`}
                       >
-                        Add to Cart
+                        {item.quantity_available === 0 ? 'Sold Out' : 'Add to Cart'}
                       </button>
                     </div>
                     <p className="text-xs text-[#75635C] mt-3">by {item.seller_name}</p>
@@ -530,11 +559,21 @@ const CustomerDashboard: React.FC = () => {
                     <div className="p-5">
                       <h3 className="font-heading text-lg font-medium text-[#3B2E2A]">{item.name}</h3>
                       <p className="text-lg font-semibold text-[#D05A45] mt-1">${item.price.toFixed(2)}</p>
+                      {!item.is_available || item.quantity_available === 0 ? (
+                        <p className="text-xs font-medium text-red-500 mt-1">
+                          {item.quantity_available === 0 ? 'Sold out today' : 'Currently unavailable'}
+                        </p>
+                      ) : item.quantity_available !== null && item.quantity_available <= 5 ? (
+                        <p className="text-xs font-medium text-[#C07B46] mt-1">
+                          Only {item.quantity_available} left today
+                        </p>
+                      ) : null}
                       <button
                         onClick={() => addToCart(item)}
-                        className="mt-3 w-full hp-btn-primary text-sm py-2"
+                        disabled={!item.is_available || item.quantity_available === 0}
+                        className="mt-3 w-full hp-btn-primary text-sm py-2 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
-                        Add to Cart
+                        {!item.is_available || item.quantity_available === 0 ? 'Unavailable' : 'Add to Cart'}
                       </button>
                     </div>
                   </div>
@@ -735,7 +774,12 @@ const CustomerDashboard: React.FC = () => {
               </div>
               
               <p className="text-sm text-[#75635C]">By {selectedItem.seller_name}</p>
-              
+              {selectedItem.quantity_available !== null && selectedItem.quantity_available <= 5 && (
+                <p className="text-xs font-medium text-[#C07B46] mt-2">
+                  Only {selectedItem.quantity_available} left today
+                </p>
+              )}
+
               <div className="border-t border-[#EAE0D5] my-4 pt-4">
                 <h4 className="font-heading text-lg font-medium mb-4">Reviews ({reviews.length})</h4>
                 
@@ -804,10 +848,11 @@ const CustomerDashboard: React.FC = () => {
                   addToCart(selectedItem);
                   setShowItemDialog(false);
                 }}
-                className="w-full hp-btn-primary mt-4"
+                disabled={selectedItem.quantity_available === 0}
+                className="w-full hp-btn-primary mt-4 disabled:opacity-50 disabled:cursor-not-allowed"
                 data-testid="dialog-add-to-cart-btn"
               >
-                Add to Cart - ${selectedItem.price.toFixed(2)}
+                {selectedItem.quantity_available === 0 ? 'Sold Out' : `Add to Cart - $${selectedItem.price.toFixed(2)}`}
               </button>
             </>
           )}
